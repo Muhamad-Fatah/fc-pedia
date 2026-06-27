@@ -4,10 +4,11 @@ import { getDb } from '@/lib/db'
 import { PlayerCard } from '@/components/PlayerCard'
 import { PlayerFilters } from '@/components/PlayerFilters'
 import type { Player } from '@/lib/types'
+import type { Row, InValue } from '@libsql/client'
 
 const PAGE_SIZE = 48
 
-function rowToPlayer(row: Record<string, unknown>): Player {
+function rowToPlayer(row: Row): Player {
   return {
     id: row.id as string,
     rank: row.rank as number,
@@ -63,23 +64,13 @@ export default async function HomePage({ searchParams }: PageProps) {
   const page = Math.max(1, parseInt(getParam(sp, 'page') || '1') || 1)
   const offset = (page - 1) * PAGE_SIZE
 
-  let db
-  try {
-    db = getDb()
-  } catch {
-    return (
-      <div className="text-center py-24 text-slate-400">
-        <p className="text-lg font-semibold">Database not ready</p>
-        <p className="mt-2 text-sm">Run <code className="bg-slate-800 px-2 py-1 rounded text-emerald-400">npm run ingest</code> first to fetch player data.</p>
-      </div>
-    )
-  }
+  const db = getDb()
 
   // Check if table exists and has data
   let dbReady = false
   try {
-    const count = (db.prepare('SELECT COUNT(*) as c FROM players').get() as { c: number }).c
-    dbReady = count > 0
+    const result = await db.execute('SELECT COUNT(*) as c FROM players')
+    dbReady = (result.rows[0].c as number) > 0
   } catch { dbReady = false }
 
   if (!dbReady) {
@@ -94,27 +85,23 @@ export default async function HomePage({ searchParams }: PageProps) {
     )
   }
 
-  // Load filter options
-  const positions = db.prepare(
-    `SELECT DISTINCT position_id as id, position_label as label, position_short as short, position_type as type
-     FROM players WHERE position_id != '' ORDER BY position_type, position_label`
-  ).all() as { id: string; label: string; short: string; type: string }[]
+  // Load filter options (in parallel)
+  const [posResult, leagueResult, natResult, abilityResult] = await Promise.all([
+    db.execute(`SELECT DISTINCT position_id as id, position_label as label, position_short as short, position_type as type
+                FROM players WHERE position_id != '' ORDER BY position_type, position_label`),
+    db.execute(`SELECT DISTINCT league_name as name FROM players WHERE league_name != '' ORDER BY league_name`),
+    db.execute(`SELECT DISTINCT nationality_label as label, nationality_image as imageUrl
+                FROM players WHERE nationality_label != '' ORDER BY nationality_label`),
+    db.execute(`SELECT player_abilities FROM players WHERE overall_rating >= 75 ORDER BY overall_rating DESC LIMIT 5000`),
+  ])
 
-  const leagues = db.prepare(
-    `SELECT DISTINCT league_name as name FROM players WHERE league_name != '' ORDER BY league_name`
-  ).all() as { name: string }[]
+  const positions = posResult.rows as unknown as { id: string; label: string; short: string; type: string }[]
+  const leagues = leagueResult.rows as unknown as { name: string }[]
+  const nationalities = natResult.rows as unknown as { label: string; imageUrl: string }[]
 
-  const nationalities = db.prepare(
-    `SELECT DISTINCT nationality_label as label, nationality_image as imageUrl
-     FROM players WHERE nationality_label != '' ORDER BY nationality_label`
-  ).all() as { label: string; imageUrl: string }[]
-
-  const abilityRows = db.prepare(
-    `SELECT player_abilities FROM players WHERE overall_rating >= 75 ORDER BY overall_rating DESC LIMIT 5000`
-  ).all() as { player_abilities: string }[]
   const abilityMap = new Map<string, { id: string; label: string; description: string; typeLabel: string }>()
-  for (const row of abilityRows) {
-    const abilities = JSON.parse(row.player_abilities || '[]') as Array<{ id: string; label: string; description: string; type: { label: string } }>
+  for (const row of abilityResult.rows) {
+    const abilities = JSON.parse((row.player_abilities as string) || '[]') as Array<{ id: string; label: string; description: string; type: { label: string } }>
     for (const a of abilities) {
       if (!abilityMap.has(a.id)) {
         abilityMap.set(a.id, { id: a.id, label: a.label, description: a.description, typeLabel: a.type?.label ?? '' })
@@ -123,35 +110,38 @@ export default async function HomePage({ searchParams }: PageProps) {
   }
   const abilities = Array.from(abilityMap.values()).sort((a, b) => a.label.localeCompare(b.label))
 
-  // Build query
+  // Build dynamic query
   const conditions: string[] = ['overall_rating BETWEEN :ratingMin AND :ratingMax']
-  const params: Record<string, unknown> = { ratingMin, ratingMax, limit: PAGE_SIZE, offset }
-  if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); params.q = `%${q}%` }
-  if (position) { conditions.push('position_id = :position'); params.position = position }
-  if (nationality) { conditions.push('nationality_label = :nationality'); params.nationality = nationality }
-  if (league) { conditions.push('league_name = :league'); params.league = league }
-  if (playstyleId) { conditions.push('ability_ids LIKE :playstylePattern'); params.playstylePattern = `%,${playstyleId},%` }
-  if (gender) { conditions.push('gender = :gender'); params.gender = gender }
+  const args: Record<string, InValue> = { ratingMin, ratingMax, limit: PAGE_SIZE, offset }
+  if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); args.q = `%${q}%` }
+  if (position) { conditions.push('position_id = :position'); args.position = position }
+  if (nationality) { conditions.push('nationality_label = :nationality'); args.nationality = nationality }
+  if (league) { conditions.push('league_name = :league'); args.league = league }
+  if (playstyleId) { conditions.push('ability_ids LIKE :playstylePattern'); args.playstylePattern = `%,${playstyleId},%` }
+  if (gender) { conditions.push('gender = :gender'); args.gender = gender }
   const where = conditions.join(' AND ')
 
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM players WHERE ${where}`).get(params) as { c: number }).c
-  const rows = db.prepare(`SELECT * FROM players WHERE ${where} ORDER BY overall_rating DESC LIMIT :limit OFFSET :offset`).all(params) as Record<string, unknown>[]
-  const players = rows.map(rowToPlayer)
+  const [countResult, rowsResult] = await Promise.all([
+    db.execute({ sql: `SELECT COUNT(*) as c FROM players WHERE ${where}`, args }),
+    db.execute({ sql: `SELECT * FROM players WHERE ${where} ORDER BY overall_rating DESC LIMIT :limit OFFSET :offset`, args }),
+  ])
+
+  const total = countResult.rows[0].c as number
+  const players = rowsResult.rows.map(rowToPlayer)
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
-  // Build URL for pagination
   function pageUrl(p: number) {
-    const params = new URLSearchParams()
-    if (q) params.set('q', q)
-    if (position) params.set('position', position)
-    if (nationality) params.set('nationality', nationality)
-    if (league) params.set('league', league)
-    if (ratingMin) params.set('ratingMin', String(ratingMin))
-    if (ratingMax !== 99) params.set('ratingMax', String(ratingMax))
-    if (playstyleId) params.set('playstyleId', playstyleId)
-    if (gender) params.set('gender', gender)
-    if (p > 1) params.set('page', String(p))
-    const qs = params.toString()
+    const urlParams = new URLSearchParams()
+    if (q) urlParams.set('q', q)
+    if (position) urlParams.set('position', position)
+    if (nationality) urlParams.set('nationality', nationality)
+    if (league) urlParams.set('league', league)
+    if (ratingMin) urlParams.set('ratingMin', String(ratingMin))
+    if (ratingMax !== 99) urlParams.set('ratingMax', String(ratingMax))
+    if (playstyleId) urlParams.set('playstyleId', playstyleId)
+    if (gender) urlParams.set('gender', gender)
+    if (p > 1) urlParams.set('page', String(p))
+    const qs = urlParams.toString()
     return qs ? `/?${qs}` : '/'
   }
 
@@ -169,7 +159,6 @@ export default async function HomePage({ searchParams }: PageProps) {
 
       {/* Main content */}
       <div className="flex-1 min-w-0">
-        {/* Results header */}
         <div className="flex items-center justify-between mb-4">
           <p className="text-sm text-slate-400">
             Showing <span className="text-white font-semibold">{offset + 1}–{Math.min(offset + PAGE_SIZE, total)}</span> of{' '}
@@ -178,7 +167,6 @@ export default async function HomePage({ searchParams }: PageProps) {
           <p className="text-sm text-slate-500">Page {page} of {totalPages}</p>
         </div>
 
-        {/* Player grid */}
         {players.length === 0 ? (
           <div className="text-center py-20 text-slate-500">
             <p className="text-lg">No players found</p>
@@ -192,7 +180,6 @@ export default async function HomePage({ searchParams }: PageProps) {
           </div>
         )}
 
-        {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-center gap-2 mt-8">
             {page > 1 && (

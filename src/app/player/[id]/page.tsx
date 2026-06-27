@@ -5,8 +5,9 @@ import { getDb } from '@/lib/db'
 import { PlayerStats } from '@/components/PlayerStats'
 import { PlaystyleBadge } from '@/components/PlaystyleBadge'
 import type { Player, PlayerAbility } from '@/lib/types'
+import type { Row } from '@libsql/client'
 
-function rowToPlayer(row: Record<string, unknown>): Player {
+function rowToPlayer(row: Row): Player {
   return {
     id: row.id as string,
     rank: row.rank as number,
@@ -73,10 +74,10 @@ interface PageProps {
 export default async function PlayerDetailPage({ params }: PageProps) {
   const { id } = await params
   const db = getDb()
-  const row = db.prepare('SELECT * FROM players WHERE id = ?').get(id) as Record<string, unknown> | undefined
-  if (!row) notFound()
+  const result = await db.execute({ sql: 'SELECT * FROM players WHERE id = ?', args: [id] })
+  if (!result.rows[0]) notFound()
 
-  const player = rowToPlayer(row)
+  const player = rowToPlayer(result.rows[0])
   const displayName = player.commonName || `${player.firstName} ${player.lastName}`.trim()
   const isGK = player.positionShort === 'GK'
 

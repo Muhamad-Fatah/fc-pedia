@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import type { Player } from '@/lib/types'
+import type { Row } from '@libsql/client'
 
-function rowToPlayer(row: Record<string, unknown>): Player {
+function rowToPlayer(row: Row): Player {
   return {
     id: row.id as string,
     rank: row.rank as number,
@@ -39,7 +40,7 @@ function rowToPlayer(row: Record<string, unknown>): Player {
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const db = getDb()
-  const row = db.prepare('SELECT * FROM players WHERE id = ?').get(id) as Record<string, unknown> | undefined
-  if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json(rowToPlayer(row))
+  const result = await db.execute({ sql: 'SELECT * FROM players WHERE id = ?', args: [id] })
+  if (!result.rows[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json(rowToPlayer(result.rows[0]))
 }

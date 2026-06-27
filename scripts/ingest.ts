@@ -1,12 +1,9 @@
-import Database from 'better-sqlite3'
-import path from 'path'
-import { fileURLToPath } from 'url'
+import { createClient } from '@libsql/client'
 import type { EAPlayerRaw } from '../src/lib/types.js'
 
-const DB_PATH = path.join(process.cwd(), 'fc-pedia.db')
 const EA_API = 'https://drop-api.ea.com/rating/ea-sports-fc'
 const PAGE_SIZE = 100
-const CONCURRENCY = 5 // parallel requests
+const CONCURRENCY = 5
 
 interface EAApiResponse {
   items: EAPlayerRaw[]
@@ -61,11 +58,26 @@ function mapPlayer(raw: EAPlayerRaw) {
   }
 }
 
+const INSERT_SQL = `
+  INSERT OR REPLACE INTO players VALUES (
+    :id, :rank, :overall_rating, :first_name, :last_name, :common_name, :birthdate,
+    :height, :weight, :skill_moves, :weak_foot, :preferred_foot, :gender,
+    :nationality_id, :nationality_label, :nationality_image, :team_id, :team_label,
+    :team_image, :league_name, :position_id, :position_label, :position_short,
+    :position_type, :alternate_positions, :player_abilities, :ability_ids, :stats,
+    :avatar_url, :shield_url
+  )
+`
+
 async function main() {
-  console.log('Initializing database...')
-  const db = new Database(DB_PATH)
-  db.pragma('journal_mode = WAL')
-  db.exec(`
+  const db = createClient({
+    url: process.env.TURSO_DB_URL ?? `file:${process.cwd()}/fc-pedia.db`,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  })
+
+  console.log(`Initializing database (${process.env.TURSO_DB_URL ? 'Turso remote' : 'local file'})...`)
+
+  await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS players (
       id TEXT PRIMARY KEY, rank INTEGER, overall_rating INTEGER,
       first_name TEXT, last_name TEXT, common_name TEXT, birthdate TEXT,
@@ -84,32 +96,18 @@ async function main() {
     CREATE INDEX IF NOT EXISTS idx_gender      ON players(gender);
   `)
 
-  const insert = db.prepare(`
-    INSERT OR REPLACE INTO players VALUES (
-      :id, :rank, :overall_rating, :first_name, :last_name, :common_name, :birthdate,
-      :height, :weight, :skill_moves, :weak_foot, :preferred_foot, :gender,
-      :nationality_id, :nationality_label, :nationality_image, :team_id, :team_label,
-      :team_image, :league_name, :position_id, :position_label, :position_short,
-      :position_type, :alternate_positions, :player_abilities, :ability_ids, :stats,
-      :avatar_url, :shield_url
-    )
-  `)
-  const insertMany = db.transaction((players: ReturnType<typeof mapPlayer>[]) => {
-    for (const p of players) insert.run(p)
-  })
-
   console.log('Fetching first page to get total...')
   const first = await fetchPage(0)
   const total = first.totalItems
   const pages = Math.ceil(total / PAGE_SIZE)
   console.log(`Total players: ${total}, pages: ${pages}`)
 
-  insertMany(first.items.map(mapPlayer))
+  // Insert first page
+  await db.batch(first.items.map((p) => ({ sql: INSERT_SQL, args: mapPlayer(p) })), 'write')
   console.log(`Page 1/${pages} done`)
 
   let inserted = first.items.length
 
-  // Fetch remaining pages with concurrency
   for (let batch = 1; batch < pages; batch += CONCURRENCY) {
     const offsets = Array.from(
       { length: Math.min(CONCURRENCY, pages - batch) },
@@ -117,7 +115,7 @@ async function main() {
     )
     const results = await Promise.all(offsets.map((o) => fetchPage(o)))
     for (const r of results) {
-      insertMany(r.items.map(mapPlayer))
+      await db.batch(r.items.map((p) => ({ sql: INSERT_SQL, args: mapPlayer(p) })), 'write')
       inserted += r.items.length
     }
     const pagesDone = batch + offsets.length
@@ -126,9 +124,9 @@ async function main() {
     }
   }
 
-  const count = (db.prepare('SELECT COUNT(*) as c FROM players').get() as { c: number }).c
+  const countResult = await db.execute('SELECT COUNT(*) as c FROM players')
+  const count = countResult.rows[0].c as number
   console.log(`\nDone! ${count} players in database.`)
-  db.close()
 }
 
 main().catch((e) => { console.error(e); process.exit(1) })

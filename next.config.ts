@@ -15,8 +15,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // better-sqlite3 is a native module — must run server-side only
-  serverExternalPackages: ['better-sqlite3'],
 }
 
 export default nextConfig

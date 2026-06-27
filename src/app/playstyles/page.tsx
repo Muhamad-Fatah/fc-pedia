@@ -18,12 +18,13 @@ export default async function PlayStylesPage() {
   let abilityMap = new Map<string, PlayerAbility & { playerCount: number }>()
 
   try {
-    const rows = db.prepare(
-      `SELECT player_abilities, COUNT(*) as cnt FROM players WHERE player_abilities != '[]' GROUP BY player_abilities`
-    ).all() as { player_abilities: string; cnt: number }[]
+    const [abResult, countResult] = await Promise.all([
+      db.execute(`SELECT player_abilities FROM players WHERE player_abilities != '[]' LIMIT 5000`),
+      db.execute(`SELECT ability_ids FROM players WHERE ability_ids != ''`),
+    ])
 
-    for (const row of rows) {
-      const abilities = JSON.parse(row.player_abilities || '[]') as PlayerAbility[]
+    for (const row of abResult.rows) {
+      const abilities = JSON.parse((row.player_abilities as string) || '[]') as PlayerAbility[]
       for (const a of abilities) {
         if (!abilityMap.has(a.id)) {
           abilityMap.set(a.id, { ...a, playerCount: 0 })
@@ -31,14 +32,9 @@ export default async function PlayStylesPage() {
       }
     }
 
-    // Count players per ability
-    const countRows = db.prepare(
-      `SELECT ability_ids FROM players WHERE ability_ids != ''`
-    ).all() as { ability_ids: string }[]
-
     const playerCounts = new Map<string, number>()
-    for (const row of countRows) {
-      const ids = row.ability_ids.split(',').filter(Boolean)
+    for (const row of countResult.rows) {
+      const ids = (row.ability_ids as string).split(',').filter(Boolean)
       for (const id of ids) {
         playerCounts.set(id, (playerCounts.get(id) ?? 0) + 1)
       }

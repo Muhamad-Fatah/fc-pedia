@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import type { Player } from '@/lib/types'
+import type { Row, InValue } from '@libsql/client'
 
-function rowToPlayer(row: Record<string, unknown>): Player {
+function rowToPlayer(row: Row): Player {
   return {
     id: row.id as string,
     rank: row.rank as number,
@@ -51,24 +52,24 @@ export async function GET(req: NextRequest) {
   const offset = parseInt(searchParams.get('offset') ?? '0') || 0
 
   const conditions: string[] = ['overall_rating BETWEEN :ratingMin AND :ratingMax']
-  const params: Record<string, unknown> = { ratingMin, ratingMax, limit, offset }
+  const args: Record<string, InValue> = { ratingMin, ratingMax, limit, offset }
 
-  if (q) {
-    conditions.push(`(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)`)
-    params.q = `%${q}%`
-  }
-  if (position) { conditions.push('position_id = :position'); params.position = position }
-  if (nationality) { conditions.push('nationality_label = :nationality'); params.nationality = nationality }
-  if (league) { conditions.push('league_name = :league'); params.league = league }
-  if (teamId) { conditions.push('team_id = :teamId'); params.teamId = teamId }
-  if (playstyleId) { conditions.push('ability_ids LIKE :playstylePattern'); params.playstylePattern = `%,${playstyleId},%` }
-  if (gender) { conditions.push('gender = :gender'); params.gender = gender }
+  if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); args.q = `%${q}%` }
+  if (position) { conditions.push('position_id = :position'); args.position = position }
+  if (nationality) { conditions.push('nationality_label = :nationality'); args.nationality = nationality }
+  if (league) { conditions.push('league_name = :league'); args.league = league }
+  if (teamId) { conditions.push('team_id = :teamId'); args.teamId = teamId }
+  if (playstyleId) { conditions.push('ability_ids LIKE :playstylePattern'); args.playstylePattern = `%,${playstyleId},%` }
+  if (gender) { conditions.push('gender = :gender'); args.gender = gender }
 
   const where = conditions.join(' AND ')
   const db = getDb()
 
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM players WHERE ${where}`).get(params) as { c: number }).c
-  const rows = db.prepare(`SELECT * FROM players WHERE ${where} ORDER BY overall_rating DESC LIMIT :limit OFFSET :offset`).all(params) as Record<string, unknown>[]
+  const [countResult, rowsResult] = await Promise.all([
+    db.execute({ sql: `SELECT COUNT(*) as c FROM players WHERE ${where}`, args }),
+    db.execute({ sql: `SELECT * FROM players WHERE ${where} ORDER BY overall_rating DESC LIMIT :limit OFFSET :offset`, args }),
+  ])
 
-  return NextResponse.json({ players: rows.map(rowToPlayer), total })
+  const total = countResult.rows[0].c as number
+  return NextResponse.json({ players: rowsResult.rows.map(rowToPlayer), total })
 }
