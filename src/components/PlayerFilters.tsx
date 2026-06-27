@@ -2,47 +2,81 @@
 
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { FilterCombobox } from './FilterCombobox'
+import { categorizePlaystyle, PLAYSTYLE_CATEGORY_ORDER } from '@/lib/playstyle-categories'
 
-interface FilterData {
+export interface FilterData {
   positions: { id: string; label: string; short: string; type: string }[]
   leagues: { name: string }[]
   nationalities: { label: string; imageUrl: string }[]
-  abilities: { id: string; label: string; description: string; typeLabel: string }[]
+  abilities: { id: string; label: string; description: string; typeLabel: string; imageUrl: string }[]
 }
 
 interface Props {
   filterData: FilterData
+  view?: string
 }
 
-export function PlayerFilters({ filterData }: Props) {
+interface BuildUrlOverrides {
+  positions?: string[]
+  nationalities?: string[]
+  leagues?: string[]
+  playstyleIds?: string[]
+  q?: string
+  gender?: string
+  ratingMin?: string
+  ratingMax?: string
+}
+
+export function PlayerFilters({ filterData, view }: Props) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
   const [q, setQ] = useState(searchParams.get('q') ?? '')
-  const [position, setPosition] = useState(searchParams.get('position') ?? '')
-  const [nationality, setNationality] = useState(searchParams.get('nationality') ?? '')
-  const [league, setLeague] = useState(searchParams.get('league') ?? '')
+  const [positions, setPositions] = useState<string[]>(
+    searchParams.get('position')?.split(',').filter(Boolean) ?? []
+  )
+  const [nationalities, setNationalities] = useState<string[]>(
+    searchParams.get('nationality')?.split(',').filter(Boolean) ?? []
+  )
+  const [leagues, setLeagues] = useState<string[]>(
+    searchParams.get('league')?.split(',').filter(Boolean) ?? []
+  )
   const [ratingMin, setRatingMin] = useState(searchParams.get('ratingMin') ?? '0')
   const [ratingMax, setRatingMax] = useState(searchParams.get('ratingMax') ?? '99')
-  const [playstyleId, setPlaystyleId] = useState(searchParams.get('playstyleId') ?? '')
+  const [playstyleIds, setPlaystyleIds] = useState<string[]>(
+    searchParams.get('playstyleId')?.split(',').filter(Boolean) ?? []
+  )
   const [gender, setGender] = useState(searchParams.get('gender') ?? '')
 
-  const buildUrl = useCallback((overrides: Record<string, string> = {}) => {
-    const state = { q, position, nationality, league, ratingMin, ratingMax, playstyleId, gender, ...overrides }
-    const p = new URLSearchParams()
-    if (state.q) p.set('q', state.q)
-    if (state.position) p.set('position', state.position)
-    if (state.nationality) p.set('nationality', state.nationality)
-    if (state.league) p.set('league', state.league)
-    if (state.ratingMin && state.ratingMin !== '0') p.set('ratingMin', state.ratingMin)
-    if (state.ratingMax && state.ratingMax !== '99') p.set('ratingMax', state.ratingMax)
-    if (state.playstyleId) p.set('playstyleId', state.playstyleId)
-    if (state.gender) p.set('gender', state.gender)
-    const qs = p.toString()
-    return qs ? `/?${qs}` : '/'
-  }, [q, position, nationality, league, ratingMin, ratingMax, playstyleId, gender])
+  const buildUrl = useCallback(
+    (overrides: BuildUrlOverrides = {}) => {
+      const pos = overrides.positions ?? positions
+      const nats = overrides.nationalities ?? nationalities
+      const lgs = overrides.leagues ?? leagues
+      const ps = overrides.playstyleIds ?? playstyleIds
+      const _q = overrides.q ?? q
+      const _gender = overrides.gender ?? gender
+      const _ratingMin = overrides.ratingMin ?? ratingMin
+      const _ratingMax = overrides.ratingMax ?? ratingMax
 
-  // Debounce only search input
+      const p = new URLSearchParams()
+      if (_q) p.set('q', _q)
+      if (pos.length) p.set('position', pos.join(','))
+      if (nats.length) p.set('nationality', nats.join(','))
+      if (lgs.length) p.set('league', lgs.join(','))
+      if (_ratingMin && _ratingMin !== '0') p.set('ratingMin', _ratingMin)
+      if (_ratingMax && _ratingMax !== '99') p.set('ratingMax', _ratingMax)
+      if (ps.length) p.set('playstyleId', ps.join(','))
+      if (_gender) p.set('gender', _gender)
+      if (view === 'table') p.set('view', 'table')
+      const qs = p.toString()
+      return qs ? `/?${qs}` : '/'
+    },
+    [positions, nationalities, leagues, playstyleIds, q, gender, ratingMin, ratingMax, view]
+  )
+
+  // Debounce search input
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -53,20 +87,16 @@ export function PlayerFilters({ filterData }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q])
 
-  function applyDropdown(overrides: Record<string, string>) {
-    router.push(buildUrl(overrides))
-  }
-
   function reset() {
-    setQ(''); setPosition(''); setNationality(''); setLeague('')
-    setRatingMin('0'); setRatingMax('99'); setPlaystyleId(''); setGender('')
-    router.push('/')
+    setQ(''); setPositions([]); setNationalities([]); setLeagues([])
+    setRatingMin('0'); setRatingMax('99'); setPlaystyleIds([]); setGender('')
+    const p = new URLSearchParams()
+    if (view === 'table') p.set('view', 'table')
+    const qs = p.toString()
+    router.push(qs ? `/?${qs}` : '/')
   }
 
-  const selectCls = 'w-full bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500'
   const inputCls = 'w-full bg-slate-800 border border-slate-600 text-slate-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-emerald-500 placeholder:text-slate-500'
-
-  const posTypes = [...new Set(filterData.positions.map((p) => p.type))]
 
   return (
     <div className="space-y-4">
@@ -93,7 +123,7 @@ export function PlayerFilters({ filterData }: Props) {
           ].map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => { setGender(value); applyDropdown({ gender: value }) }}
+              onClick={() => { setGender(value); router.push(buildUrl({ gender: value })) }}
               className={`flex-1 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
                 gender === value
                   ? 'bg-emerald-600 border-emerald-500 text-white'
@@ -115,7 +145,7 @@ export function PlayerFilters({ filterData }: Props) {
           <input
             type="number" min="0" max="99" value={ratingMin}
             onChange={(e) => setRatingMin(e.target.value)}
-            onBlur={() => applyDropdown({ ratingMin })}
+            onBlur={() => router.push(buildUrl({ ratingMin }))}
             className={`${inputCls} w-20`}
             placeholder="Min"
           />
@@ -123,7 +153,7 @@ export function PlayerFilters({ filterData }: Props) {
           <input
             type="number" min="0" max="99" value={ratingMax}
             onChange={(e) => setRatingMax(e.target.value)}
-            onBlur={() => applyDropdown({ ratingMax })}
+            onBlur={() => router.push(buildUrl({ ratingMax }))}
             className={`${inputCls} w-20`}
             placeholder="Max"
           />
@@ -131,68 +161,55 @@ export function PlayerFilters({ filterData }: Props) {
       </div>
 
       {/* Position */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Position</label>
-        <select
-          value={position}
-          onChange={(e) => { setPosition(e.target.value); applyDropdown({ position: e.target.value }) }}
-          className={selectCls}
-        >
-          <option value="">All positions</option>
-          {posTypes.map((type) => (
-            <optgroup key={type} label={type}>
-              {filterData.positions.filter((p) => p.type === type).map((p) => (
-                <option key={p.id} value={p.id}>{p.short} — {p.label}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </div>
+      <FilterCombobox
+        label="Position"
+        options={filterData.positions.map((p) => ({
+          value: p.id,
+          label: `${p.short} — ${p.label}`,
+          group: p.type,
+        }))}
+        selected={positions}
+        onChange={(vals) => { setPositions(vals); router.push(buildUrl({ positions: vals })) }}
+      />
 
       {/* Nationality */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Nationality</label>
-        <select
-          value={nationality}
-          onChange={(e) => { setNationality(e.target.value); applyDropdown({ nationality: e.target.value }) }}
-          className={selectCls}
-        >
-          <option value="">All nations</option>
-          {filterData.nationalities.map((n) => (
-            <option key={n.label} value={n.label}>{n.label}</option>
-          ))}
-        </select>
-      </div>
+      <FilterCombobox
+        label="Nationality"
+        options={filterData.nationalities.map((n) => ({
+          value: n.label,
+          label: n.label,
+          imageUrl: n.imageUrl,
+        }))}
+        selected={nationalities}
+        onChange={(vals) => { setNationalities(vals); router.push(buildUrl({ nationalities: vals })) }}
+      />
 
       {/* League */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">League</label>
-        <select
-          value={league}
-          onChange={(e) => { setLeague(e.target.value); applyDropdown({ league: e.target.value }) }}
-          className={selectCls}
-        >
-          <option value="">All leagues</option>
-          {filterData.leagues.map((l) => (
-            <option key={l.name} value={l.name}>{l.name}</option>
-          ))}
-        </select>
-      </div>
+      <FilterCombobox
+        label="League"
+        options={filterData.leagues.map((l) => ({
+          value: l.name,
+          label: l.name,
+        }))}
+        selected={leagues}
+        onChange={(vals) => { setLeagues(vals); router.push(buildUrl({ leagues: vals })) }}
+      />
 
       {/* PlayStyle */}
-      <div>
-        <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">PlayStyle</label>
-        <select
-          value={playstyleId}
-          onChange={(e) => { setPlaystyleId(e.target.value); applyDropdown({ playstyleId: e.target.value }) }}
-          className={selectCls}
-        >
-          <option value="">Any playstyle</option>
-          {filterData.abilities.map((a) => (
-            <option key={a.id} value={a.id}>{a.typeLabel === 'Play Style Plus' ? '★ ' : ''}{a.label}</option>
-          ))}
-        </select>
-      </div>
+      <FilterCombobox
+        label="PlayStyle"
+        options={filterData.abilities.map((a) => ({
+          value: a.id,
+          label: a.label,
+          imageUrl: a.imageUrl,
+          group: a.typeLabel === 'Play Style Plus' ? 'PlayStyle+' : 'PlayStyle',
+          category: categorizePlaystyle(a.label),
+        }))}
+        tabs={['PlayStyle+', 'PlayStyle']}
+        categoryOrder={PLAYSTYLE_CATEGORY_ORDER}
+        selected={playstyleIds}
+        onChange={(vals) => { setPlaystyleIds(vals); router.push(buildUrl({ playstyleIds: vals })) }}
+      />
 
       {/* Reset */}
       <button

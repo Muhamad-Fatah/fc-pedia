@@ -1,15 +1,7 @@
 import { getDb } from '@/lib/db'
 import { PlaystyleBadge } from '@/components/PlaystyleBadge'
 import type { PlayerAbility } from '@/lib/types'
-
-const CATEGORIES: Record<string, string[]> = {
-  Finishing: ['Finesse Shot', 'Chip Shot', 'Power Shot', 'Dead Ball', 'Precision Header', 'Gamechanger'],
-  Passing: ['Pinged Pass', 'Long Ball Pass', 'Tiki Taka', 'Whipped Pass', 'Inventive'],
-  Defending: ['Jockey', 'Block', 'Intercept', 'Anticipate', 'Bruiser', 'Aerial Fortress', 'Slide Tackle'],
-  'Ball Control': ['First Touch', 'Flair', 'Acrobatic', 'Press Proven', 'Technical'],
-  Physical: ['Relentless', 'Rapid', 'Quick Step', 'Long Throw'],
-  Goalkeeper: ['Footwork', 'Cross Claimer', 'Rush Out', 'Deflector', 'Far Reach'],
-}
+import { PLAYSTYLE_CATEGORY_ORDER, categorizePlaystyle } from '@/lib/playstyle-categories'
 
 export default async function PlayStylesPage() {
   const db = getDb()
@@ -51,23 +43,12 @@ export default async function PlayStylesPage() {
   const plusAbilities = abilities.filter((a) => a.type?.label === 'Play Style Plus')
   const baseAbilities = abilities.filter((a) => a.type?.label !== 'Play Style Plus')
 
-  // Try to match by label into categories, fallback to "Other"
-  function categorize(label: string): string {
-    for (const [cat, labels] of Object.entries(CATEGORIES)) {
-      if (labels.some((l) => label.toLowerCase().includes(l.toLowerCase()) || l.toLowerCase().includes(label.toLowerCase()))) {
-        return cat
-      }
-    }
-    return 'Other'
-  }
-
   const grouped = new Map<string, (PlayerAbility & { playerCount: number })[]>()
-  const categoryOrder = [...Object.keys(CATEGORIES), 'Other']
 
-  for (const cat of categoryOrder) grouped.set(cat, [])
+  for (const cat of PLAYSTYLE_CATEGORY_ORDER) grouped.set(cat, [])
 
   for (const a of baseAbilities) {
-    const cat = categorize(a.label)
+    const cat = categorizePlaystyle(a.label)
     grouped.get(cat)?.push(a) ?? grouped.set(cat, [a])
   }
 
@@ -99,7 +80,7 @@ export default async function PlayStylesPage() {
       )}
 
       {/* By category */}
-      {categoryOrder.map((cat) => {
+      {PLAYSTYLE_CATEGORY_ORDER.map((cat) => {
         const catAbilities = grouped.get(cat) ?? []
         if (catAbilities.length === 0) return null
         return (
@@ -135,11 +116,25 @@ function AbilityCard({
   const isPlus = ability.type?.label === 'Play Style Plus'
   return (
     <div className={`bg-slate-800 border rounded-xl p-4 ${isPlus ? 'border-amber-500/40' : 'border-slate-700'}`}>
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <PlaystyleBadge ability={ability} />
-        {ability.playerCount > 0 && (
-          <span className="text-xs text-slate-500 flex-shrink-0">{ability.playerCount.toLocaleString()} players</span>
+      <div className="flex items-start gap-3 mb-2">
+        {ability.imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={ability.imageUrl}
+            alt=""
+            width={36}
+            height={36}
+            className="object-contain flex-shrink-0 mt-0.5"
+          />
         )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <PlaystyleBadge ability={ability} />
+            {ability.playerCount > 0 && (
+              <span className="text-xs text-slate-500 flex-shrink-0">{ability.playerCount.toLocaleString()} players</span>
+            )}
+          </div>
+        </div>
       </div>
       <p className="text-sm text-slate-400 leading-relaxed">{ability.description || '—'}</p>
       {plusAbility && !isPlus && (

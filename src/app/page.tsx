@@ -2,7 +2,9 @@ import { Suspense } from 'react'
 import Link from 'next/link'
 import { getDb } from '@/lib/db'
 import { PlayerCard } from '@/components/PlayerCard'
-import { PlayerFilters } from '@/components/PlayerFilters'
+import { PlayerTable } from '@/components/PlayerTable'
+import { FilterChips } from '@/components/FilterChips'
+import { FilterDrawer } from '@/components/FilterDrawer'
 import type { Player } from '@/lib/types'
 import type { Row, InValue } from '@libsql/client'
 
@@ -54,14 +56,15 @@ function getParam(params: Record<string, string | string[] | undefined>, key: st
 export default async function HomePage({ searchParams }: PageProps) {
   const sp = await searchParams
   const q = getParam(sp, 'q')
-  const position = getParam(sp, 'position')
-  const nationality = getParam(sp, 'nationality')
-  const league = getParam(sp, 'league')
+  const selectedPositions = getParam(sp, 'position').split(',').filter(Boolean)
+  const selectedNationalities = getParam(sp, 'nationality').split(',').filter(Boolean)
+  const selectedLeagues = getParam(sp, 'league').split(',').filter(Boolean)
   const ratingMin = parseInt(getParam(sp, 'ratingMin') || '0') || 0
   const ratingMax = parseInt(getParam(sp, 'ratingMax') || '99') || 99
-  const playstyleId = getParam(sp, 'playstyleId')
+  const selectedPlaystyles = getParam(sp, 'playstyleId').split(',').filter(Boolean)
   const gender = getParam(sp, 'gender')
   const page = Math.max(1, parseInt(getParam(sp, 'page') || '1') || 1)
+  const view = getParam(sp, 'view') === 'table' ? 'table' : 'grid'
   const offset = (page - 1) * PAGE_SIZE
 
   const db = getDb()
@@ -99,12 +102,12 @@ export default async function HomePage({ searchParams }: PageProps) {
   const leagues = leagueResult.rows as unknown as { name: string }[]
   const nationalities = natResult.rows as unknown as { label: string; imageUrl: string }[]
 
-  const abilityMap = new Map<string, { id: string; label: string; description: string; typeLabel: string }>()
+  const abilityMap = new Map<string, { id: string; label: string; description: string; typeLabel: string; imageUrl: string }>()
   for (const row of abilityResult.rows) {
-    const abilities = JSON.parse((row.player_abilities as string) || '[]') as Array<{ id: string; label: string; description: string; type: { label: string } }>
+    const abilities = JSON.parse((row.player_abilities as string) || '[]') as Array<{ id: string; label: string; description: string; imageUrl: string; type: { label: string } }>
     for (const a of abilities) {
       if (!abilityMap.has(a.id)) {
-        abilityMap.set(a.id, { id: a.id, label: a.label, description: a.description, typeLabel: a.type?.label ?? '' })
+        abilityMap.set(a.id, { id: a.id, label: a.label, description: a.description, typeLabel: a.type?.label ?? '', imageUrl: a.imageUrl ?? '' })
       }
     }
   }
@@ -114,10 +117,23 @@ export default async function HomePage({ searchParams }: PageProps) {
   const conditions: string[] = ['overall_rating BETWEEN :ratingMin AND :ratingMax']
   const args: Record<string, InValue> = { ratingMin, ratingMax, limit: PAGE_SIZE, offset }
   if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); args.q = `%${q}%` }
-  if (position) { conditions.push('position_id = :position'); args.position = position }
-  if (nationality) { conditions.push('nationality_label = :nationality'); args.nationality = nationality }
-  if (league) { conditions.push('league_name = :league'); args.league = league }
-  if (playstyleId) { conditions.push('ability_ids LIKE :playstylePattern'); args.playstylePattern = `%,${playstyleId},%` }
+  if (selectedPositions.length) {
+    selectedPositions.forEach((v, i) => { args[`pos${i}`] = v })
+    conditions.push(`position_id IN (${selectedPositions.map((_, i) => `:pos${i}`).join(',')})`)
+  }
+  if (selectedNationalities.length) {
+    selectedNationalities.forEach((v, i) => { args[`nat${i}`] = v })
+    conditions.push(`nationality_label IN (${selectedNationalities.map((_, i) => `:nat${i}`).join(',')})`)
+  }
+  if (selectedLeagues.length) {
+    selectedLeagues.forEach((v, i) => { args[`lg${i}`] = v })
+    conditions.push(`league_name IN (${selectedLeagues.map((_, i) => `:lg${i}`).join(',')})`)
+  }
+  if (selectedPlaystyles.length) {
+    const psConds = selectedPlaystyles.map((_, i) => `ability_ids LIKE :ps${i}`).join(' OR ')
+    conditions.push(`(${psConds})`)
+    selectedPlaystyles.forEach((id, i) => { args[`ps${i}`] = `%,${id},%` })
+  }
   if (gender) { conditions.push('gender = :gender'); args.gender = gender }
   const where = conditions.join(' AND ')
 
@@ -130,48 +146,84 @@ export default async function HomePage({ searchParams }: PageProps) {
   const players = rowsResult.rows.map(rowToPlayer)
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
+  function buildFilterParams() {
+    const p = new URLSearchParams()
+    if (q) p.set('q', q)
+    if (selectedPositions.length) p.set('position', selectedPositions.join(','))
+    if (selectedNationalities.length) p.set('nationality', selectedNationalities.join(','))
+    if (selectedLeagues.length) p.set('league', selectedLeagues.join(','))
+    if (ratingMin) p.set('ratingMin', String(ratingMin))
+    if (ratingMax !== 99) p.set('ratingMax', String(ratingMax))
+    if (selectedPlaystyles.length) p.set('playstyleId', selectedPlaystyles.join(','))
+    if (gender) p.set('gender', gender)
+    return p
+  }
+
   function pageUrl(p: number) {
-    const urlParams = new URLSearchParams()
-    if (q) urlParams.set('q', q)
-    if (position) urlParams.set('position', position)
-    if (nationality) urlParams.set('nationality', nationality)
-    if (league) urlParams.set('league', league)
-    if (ratingMin) urlParams.set('ratingMin', String(ratingMin))
-    if (ratingMax !== 99) urlParams.set('ratingMax', String(ratingMax))
-    if (playstyleId) urlParams.set('playstyleId', playstyleId)
-    if (gender) urlParams.set('gender', gender)
+    const urlParams = buildFilterParams()
+    if (view === 'table') urlParams.set('view', 'table')
     if (p > 1) urlParams.set('page', String(p))
     const qs = urlParams.toString()
     return qs ? `/?${qs}` : '/'
   }
 
-  return (
-    <div className="flex gap-6">
-      {/* Sidebar */}
-      <aside className="w-64 flex-shrink-0">
-        <div className="sticky top-20 bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Filters</h2>
-          <Suspense>
-            <PlayerFilters filterData={{ positions, leagues, nationalities, abilities }} />
-          </Suspense>
-        </div>
-      </aside>
+  function viewUrl(v: 'grid' | 'table') {
+    const urlParams = buildFilterParams()
+    if (v === 'table') urlParams.set('view', 'table')
+    const qs = urlParams.toString()
+    return qs ? `/?${qs}` : '/'
+  }
 
-      {/* Main content */}
-      <div className="flex-1 min-w-0">
+  return (
+    <div>
+      {/* Main content — full width now that sidebar is a drawer */}
+      <div className="min-w-0">
         <div className="flex items-center justify-between mb-4">
           <p className="text-sm text-slate-400">
             Showing <span className="text-white font-semibold">{offset + 1}–{Math.min(offset + PAGE_SIZE, total)}</span> of{' '}
             <span className="text-white font-semibold">{total.toLocaleString()}</span> players
           </p>
-          <p className="text-sm text-slate-500">Page {page} of {totalPages}</p>
+          <div className="flex items-center gap-2">
+            <Suspense>
+              <FilterDrawer filterData={{ positions, leagues, nationalities, abilities }} view={view} />
+            </Suspense>
+            <p className="text-sm text-slate-500">Page {page} of {totalPages}</p>
+            <div className="flex items-center gap-0.5 bg-slate-800 border border-slate-700 rounded-lg p-0.5">
+              <Link
+                href={viewUrl('grid')}
+                title="Grid view"
+                className={`p-1.5 rounded-md transition-colors ${view === 'grid' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+              </Link>
+              <Link
+                href={viewUrl('table')}
+                title="Table view"
+                className={`p-1.5 rounded-md transition-colors ${view === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="3" y="4" width="18" height="2.5" rx="1" /><rect x="3" y="10.75" width="18" height="2.5" rx="1" />
+                  <rect x="3" y="17.5" width="18" height="2.5" rx="1" />
+                </svg>
+              </Link>
+            </div>
+          </div>
         </div>
+
+        <Suspense>
+          <FilterChips filterData={{ positions, leagues, nationalities, abilities }} />
+        </Suspense>
 
         {players.length === 0 ? (
           <div className="text-center py-20 text-slate-500">
             <p className="text-lg">No players found</p>
             <p className="text-sm mt-1">Try adjusting your filters</p>
           </div>
+        ) : view === 'table' ? (
+          <PlayerTable players={players} />
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             {players.map((player) => (
