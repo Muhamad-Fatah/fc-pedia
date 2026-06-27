@@ -1,65 +1,233 @@
-import Image from "next/image";
+import { Suspense } from 'react'
+import Link from 'next/link'
+import { getDb } from '@/lib/db'
+import { PlayerCard } from '@/components/PlayerCard'
+import { PlayerFilters } from '@/components/PlayerFilters'
+import type { Player } from '@/lib/types'
 
-export default function Home() {
+const PAGE_SIZE = 48
+
+function rowToPlayer(row: Record<string, unknown>): Player {
+  return {
+    id: row.id as string,
+    rank: row.rank as number,
+    overallRating: row.overall_rating as number,
+    firstName: row.first_name as string,
+    lastName: row.last_name as string,
+    commonName: row.common_name as string,
+    birthdate: row.birthdate as string,
+    height: row.height as number,
+    weight: row.weight as number,
+    skillMoves: row.skill_moves as number,
+    weakFootAbility: row.weak_foot as number,
+    preferredFoot: row.preferred_foot as string,
+    gender: row.gender as string,
+    nationalityId: row.nationality_id as string,
+    nationalityLabel: row.nationality_label as string,
+    nationalityImage: row.nationality_image as string,
+    teamId: row.team_id as string,
+    teamLabel: row.team_label as string,
+    teamImage: row.team_image as string,
+    leagueName: row.league_name as string,
+    positionId: row.position_id as string,
+    positionLabel: row.position_label as string,
+    positionShort: row.position_short as string,
+    positionType: row.position_type as string,
+    alternatePositions: JSON.parse((row.alternate_positions as string) || '[]'),
+    playerAbilities: JSON.parse((row.player_abilities as string) || '[]'),
+    stats: JSON.parse((row.stats as string) || '{}'),
+    avatarUrl: row.avatar_url as string,
+    shieldUrl: row.shield_url as string,
+  }
+}
+
+interface PageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
+
+function getParam(params: Record<string, string | string[] | undefined>, key: string): string {
+  const v = params[key]
+  return Array.isArray(v) ? (v[0] ?? '') : (v ?? '')
+}
+
+export default async function HomePage({ searchParams }: PageProps) {
+  const sp = await searchParams
+  const q = getParam(sp, 'q')
+  const position = getParam(sp, 'position')
+  const nationality = getParam(sp, 'nationality')
+  const league = getParam(sp, 'league')
+  const ratingMin = parseInt(getParam(sp, 'ratingMin') || '0') || 0
+  const ratingMax = parseInt(getParam(sp, 'ratingMax') || '99') || 99
+  const playstyleId = getParam(sp, 'playstyleId')
+  const gender = getParam(sp, 'gender')
+  const page = Math.max(1, parseInt(getParam(sp, 'page') || '1') || 1)
+  const offset = (page - 1) * PAGE_SIZE
+
+  let db
+  try {
+    db = getDb()
+  } catch {
+    return (
+      <div className="text-center py-24 text-slate-400">
+        <p className="text-lg font-semibold">Database not ready</p>
+        <p className="mt-2 text-sm">Run <code className="bg-slate-800 px-2 py-1 rounded text-emerald-400">npm run ingest</code> first to fetch player data.</p>
+      </div>
+    )
+  }
+
+  // Check if table exists and has data
+  let dbReady = false
+  try {
+    const count = (db.prepare('SELECT COUNT(*) as c FROM players').get() as { c: number }).c
+    dbReady = count > 0
+  } catch { dbReady = false }
+
+  if (!dbReady) {
+    return (
+      <div className="text-center py-24 text-slate-400">
+        <p className="text-2xl font-bold text-white mb-3">No data yet</p>
+        <p className="text-slate-400 mb-6">Run the ingestion script to fetch all 17,000+ players from EA Sports FC.</p>
+        <code className="bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-emerald-400 font-mono">
+          npm run ingest
+        </code>
+      </div>
+    )
+  }
+
+  // Load filter options
+  const positions = db.prepare(
+    `SELECT DISTINCT position_id as id, position_label as label, position_short as short, position_type as type
+     FROM players WHERE position_id != '' ORDER BY position_type, position_label`
+  ).all() as { id: string; label: string; short: string; type: string }[]
+
+  const leagues = db.prepare(
+    `SELECT DISTINCT league_name as name FROM players WHERE league_name != '' ORDER BY league_name`
+  ).all() as { name: string }[]
+
+  const nationalities = db.prepare(
+    `SELECT DISTINCT nationality_label as label, nationality_image as imageUrl
+     FROM players WHERE nationality_label != '' ORDER BY nationality_label`
+  ).all() as { label: string; imageUrl: string }[]
+
+  const abilityRows = db.prepare(
+    `SELECT player_abilities FROM players WHERE overall_rating >= 75 ORDER BY overall_rating DESC LIMIT 5000`
+  ).all() as { player_abilities: string }[]
+  const abilityMap = new Map<string, { id: string; label: string; description: string; typeLabel: string }>()
+  for (const row of abilityRows) {
+    const abilities = JSON.parse(row.player_abilities || '[]') as Array<{ id: string; label: string; description: string; type: { label: string } }>
+    for (const a of abilities) {
+      if (!abilityMap.has(a.id)) {
+        abilityMap.set(a.id, { id: a.id, label: a.label, description: a.description, typeLabel: a.type?.label ?? '' })
+      }
+    }
+  }
+  const abilities = Array.from(abilityMap.values()).sort((a, b) => a.label.localeCompare(b.label))
+
+  // Build query
+  const conditions: string[] = ['overall_rating BETWEEN :ratingMin AND :ratingMax']
+  const params: Record<string, unknown> = { ratingMin, ratingMax, limit: PAGE_SIZE, offset }
+  if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); params.q = `%${q}%` }
+  if (position) { conditions.push('position_id = :position'); params.position = position }
+  if (nationality) { conditions.push('nationality_label = :nationality'); params.nationality = nationality }
+  if (league) { conditions.push('league_name = :league'); params.league = league }
+  if (playstyleId) { conditions.push('ability_ids LIKE :playstylePattern'); params.playstylePattern = `%,${playstyleId},%` }
+  if (gender) { conditions.push('gender = :gender'); params.gender = gender }
+  const where = conditions.join(' AND ')
+
+  const total = (db.prepare(`SELECT COUNT(*) as c FROM players WHERE ${where}`).get(params) as { c: number }).c
+  const rows = db.prepare(`SELECT * FROM players WHERE ${where} ORDER BY overall_rating DESC LIMIT :limit OFFSET :offset`).all(params) as Record<string, unknown>[]
+  const players = rows.map(rowToPlayer)
+  const totalPages = Math.ceil(total / PAGE_SIZE)
+
+  // Build URL for pagination
+  function pageUrl(p: number) {
+    const params = new URLSearchParams()
+    if (q) params.set('q', q)
+    if (position) params.set('position', position)
+    if (nationality) params.set('nationality', nationality)
+    if (league) params.set('league', league)
+    if (ratingMin) params.set('ratingMin', String(ratingMin))
+    if (ratingMax !== 99) params.set('ratingMax', String(ratingMax))
+    if (playstyleId) params.set('playstyleId', playstyleId)
+    if (gender) params.set('gender', gender)
+    if (p > 1) params.set('page', String(p))
+    const qs = params.toString()
+    return qs ? `/?${qs}` : '/'
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="flex gap-6">
+      {/* Sidebar */}
+      <aside className="w-64 flex-shrink-0">
+        <div className="sticky top-20 bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Filters</h2>
+          <Suspense>
+            <PlayerFilters filterData={{ positions, leagues, nationalities, abilities }} />
+          </Suspense>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <div className="flex-1 min-w-0">
+        {/* Results header */}
+        <div className="flex items-center justify-between mb-4">
+          <p className="text-sm text-slate-400">
+            Showing <span className="text-white font-semibold">{offset + 1}–{Math.min(offset + PAGE_SIZE, total)}</span> of{' '}
+            <span className="text-white font-semibold">{total.toLocaleString()}</span> players
           </p>
+          <p className="text-sm text-slate-500">Page {page} of {totalPages}</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+        {/* Player grid */}
+        {players.length === 0 ? (
+          <div className="text-center py-20 text-slate-500">
+            <p className="text-lg">No players found</p>
+            <p className="text-sm mt-1">Try adjusting your filters</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+            {players.map((player) => (
+              <PlayerCard key={player.id} player={player} />
+            ))}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-8">
+            {page > 1 && (
+              <Link href={pageUrl(page - 1)} className="px-4 py-2 text-sm bg-slate-800 border border-slate-700 rounded-lg hover:border-slate-500 transition-colors">
+                ← Prev
+              </Link>
+            )}
+            {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+              let p: number
+              if (totalPages <= 7) p = i + 1
+              else if (page <= 4) p = i + 1
+              else if (page >= totalPages - 3) p = totalPages - 6 + i
+              else p = page - 3 + i
+              return (
+                <Link
+                  key={p}
+                  href={pageUrl(p)}
+                  className={`w-9 h-9 flex items-center justify-center text-sm rounded-lg border transition-colors ${
+                    p === page
+                      ? 'bg-emerald-600 border-emerald-500 text-white font-bold'
+                      : 'bg-slate-800 border-slate-700 hover:border-slate-500 text-slate-300'
+                  }`}
+                >
+                  {p}
+                </Link>
+              )
+            })}
+            {page < totalPages && (
+              <Link href={pageUrl(page + 1)} className="px-4 py-2 text-sm bg-slate-800 border border-slate-700 rounded-lg hover:border-slate-500 transition-colors">
+                Next →
+              </Link>
+            )}
+          </div>
+        )}
+      </div>
     </div>
-  );
+  )
 }
