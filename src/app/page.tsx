@@ -61,8 +61,10 @@ export default async function HomePage({ searchParams }: PageProps) {
   const selectedLeagues = getParam(sp, 'league').split(',').filter(Boolean)
   const ratingMin = parseInt(getParam(sp, 'ratingMin') || '0') || 0
   const ratingMax = parseInt(getParam(sp, 'ratingMax') || '99') || 99
+  const selectedTeams = getParam(sp, 'teamId').split(',').filter(Boolean)
   const selectedPlaystyles = getParam(sp, 'playstyleId').split(',').filter(Boolean)
   const gender = getParam(sp, 'gender')
+  const sort = getParam(sp, 'sort') || 'rank'
   const page = Math.max(1, parseInt(getParam(sp, 'page') || '1') || 1)
   const view = getParam(sp, 'view') === 'table' ? 'table' : 'grid'
   const offset = (page - 1) * PAGE_SIZE
@@ -89,18 +91,21 @@ export default async function HomePage({ searchParams }: PageProps) {
   }
 
   // Load filter options (in parallel)
-  const [posResult, leagueResult, natResult, abilityResult] = await Promise.all([
+  const [posResult, leagueResult, natResult, abilityResult, teamResult] = await Promise.all([
     db.execute(`SELECT DISTINCT position_id as id, position_label as label, position_short as short, position_type as type
                 FROM players WHERE position_id != '' ORDER BY position_type, position_label`),
     db.execute(`SELECT DISTINCT league_name as name FROM players WHERE league_name != '' ORDER BY league_name`),
     db.execute(`SELECT DISTINCT nationality_label as label, nationality_image as imageUrl
                 FROM players WHERE nationality_label != '' ORDER BY nationality_label`),
     db.execute(`SELECT player_abilities FROM players WHERE overall_rating >= 75 ORDER BY overall_rating DESC LIMIT 5000`),
+    db.execute(`SELECT DISTINCT team_id as id, team_label as label, team_image as image, league_name as leagueName
+                FROM players WHERE team_id != '' ORDER BY league_name, team_label`),
   ])
 
   const positions = posResult.rows as unknown as { id: string; label: string; short: string; type: string }[]
   const leagues = leagueResult.rows as unknown as { name: string }[]
   const nationalities = natResult.rows as unknown as { label: string; imageUrl: string }[]
+  const teams = teamResult.rows as unknown as { id: string; label: string; image: string; leagueName: string }[]
 
   const abilityMap = new Map<string, { id: string; label: string; description: string; typeLabel: string; imageUrl: string }>()
   for (const row of abilityResult.rows) {
@@ -129,6 +134,10 @@ export default async function HomePage({ searchParams }: PageProps) {
     selectedLeagues.forEach((v, i) => { args[`lg${i}`] = v })
     conditions.push(`league_name IN (${selectedLeagues.map((_, i) => `:lg${i}`).join(',')})`)
   }
+  if (selectedTeams.length) {
+    selectedTeams.forEach((v, i) => { args[`tm${i}`] = v })
+    conditions.push(`team_id IN (${selectedTeams.map((_, i) => `:tm${i}`).join(',')})`)
+  }
   if (selectedPlaystyles.length) {
     const psConds = selectedPlaystyles.map((_, i) => `ability_ids LIKE :ps${i}`).join(' OR ')
     conditions.push(`(${psConds})`)
@@ -137,9 +146,21 @@ export default async function HomePage({ searchParams }: PageProps) {
   if (gender) { conditions.push('gender = :gender'); args.gender = gender }
   const where = conditions.join(' AND ')
 
+  const sortClause: Record<string, string> = {
+    rank: 'rank ASC',
+    overall: 'overall_rating DESC',
+    pace: "CAST(JSON_EXTRACT(stats, '$.pac.value') AS INTEGER) DESC, overall_rating DESC",
+    shooting: "CAST(JSON_EXTRACT(stats, '$.sho.value') AS INTEGER) DESC, overall_rating DESC",
+    passing: "CAST(JSON_EXTRACT(stats, '$.pas.value') AS INTEGER) DESC, overall_rating DESC",
+    dribbling: "CAST(JSON_EXTRACT(stats, '$.dri.value') AS INTEGER) DESC, overall_rating DESC",
+    defending: "CAST(JSON_EXTRACT(stats, '$.def.value') AS INTEGER) DESC, overall_rating DESC",
+    physicality: "CAST(JSON_EXTRACT(stats, '$.phy.value') AS INTEGER) DESC, overall_rating DESC",
+  }
+  const orderBy = sortClause[sort] ?? 'rank ASC'
+
   const [countResult, rowsResult] = await Promise.all([
     db.execute({ sql: `SELECT COUNT(*) as c FROM players WHERE ${where}`, args }),
-    db.execute({ sql: `SELECT * FROM players WHERE ${where} ORDER BY overall_rating DESC LIMIT :limit OFFSET :offset`, args }),
+    db.execute({ sql: `SELECT * FROM players WHERE ${where} ORDER BY ${orderBy} LIMIT :limit OFFSET :offset`, args }),
   ])
 
   const total = countResult.rows[0].c as number
@@ -185,7 +206,7 @@ export default async function HomePage({ searchParams }: PageProps) {
           </p>
           <div className="flex items-center gap-2">
             <Suspense>
-              <FilterDrawer filterData={{ positions, leagues, nationalities, abilities }} view={view} />
+              <FilterDrawer filterData={{ positions, leagues, teams, nationalities, abilities }} view={view} />
             </Suspense>
             <p className="text-sm text-slate-500">Page {page} of {totalPages}</p>
             <div className="flex items-center gap-0.5 bg-slate-800 border border-slate-700 rounded-lg p-0.5">
@@ -214,7 +235,7 @@ export default async function HomePage({ searchParams }: PageProps) {
         </div>
 
         <Suspense>
-          <FilterChips filterData={{ positions, leagues, nationalities, abilities }} />
+          <FilterChips filterData={{ positions, leagues, teams, nationalities, abilities }} />
         </Suspense>
 
         {players.length === 0 ? (

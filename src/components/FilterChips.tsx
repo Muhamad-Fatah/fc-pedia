@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 interface FilterData {
   positions: { id: string; label: string; short: string; type: string }[]
   leagues: { name: string }[]
+  teams: { id: string; label: string; image: string; leagueName: string }[]
   nationalities: { label: string; imageUrl: string }[]
   abilities: { id: string; label: string; description: string; typeLabel: string; imageUrl: string }[]
 }
@@ -29,6 +30,7 @@ export function FilterChips({ filterData }: FilterChipsProps) {
   const positionStr = searchParams.get('position') ?? ''
   const nationalityStr = searchParams.get('nationality') ?? ''
   const leagueStr = searchParams.get('league') ?? ''
+  const teamIdStr = searchParams.get('teamId') ?? ''
   const playstyleStr = searchParams.get('playstyleId') ?? ''
   const gender = searchParams.get('gender') ?? ''
   const ratingMin = searchParams.get('ratingMin') ?? '0'
@@ -38,6 +40,7 @@ export function FilterChips({ filterData }: FilterChipsProps) {
   const positionIds = positionStr.split(',').filter(Boolean)
   const nationalityLabels = nationalityStr.split(',').filter(Boolean)
   const leagueNames = leagueStr.split(',').filter(Boolean)
+  const selectedTeamIds = teamIdStr.split(',').filter(Boolean)
   const playstyleIds = playstyleStr.split(',').filter(Boolean)
 
   function removeParam(key: string, value?: string) {
@@ -81,6 +84,11 @@ export function FilterChips({ filterData }: FilterChipsProps) {
 
   leagueNames.forEach((name) => {
     chips.push({ key: 'league', value: name, label: name })
+  })
+
+  selectedTeamIds.forEach((id) => {
+    const team = filterData.teams.find((t) => t.id === id)
+    chips.push({ key: 'teamId', value: id, label: team?.label ?? id, imageUrl: team?.image })
   })
 
   playstyleIds.forEach((id) => {
