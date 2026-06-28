@@ -34,6 +34,32 @@ const SORT_OPTIONS = [
 // Preferred display order for position groups
 const POSITION_GROUP_ORDER = ['Attackers', 'Midfielders', 'Defenders', 'Goalkeepers']
 
+// League popularity order — partial name match, case-insensitive
+const LEAGUE_POPULARITY_KEYWORDS = [
+  'premier league',
+  'laliga',
+  'la liga',
+  'bundesliga',
+  'serie a',
+  'ligue 1',
+  'eredivisie',
+  'primeira liga',
+  'pro league',       // Saudi Pro League
+  'mls',
+  'liga mx',
+  'süper lig',
+  'super lig',
+  'champions league',
+  'europa league',
+  'conference league',
+]
+
+function leaguePopularityIndex(name: string): number {
+  const lower = name.toLowerCase()
+  const idx = LEAGUE_POPULARITY_KEYWORDS.findIndex((kw) => lower.includes(kw))
+  return idx === -1 ? LEAGUE_POPULARITY_KEYWORDS.length : idx
+}
+
 function positionBadgeColor(type: string) {
   switch (type?.toLowerCase()) {
     case 'attacker': return 'bg-red-500/20 text-red-400 border border-red-500/30'
@@ -132,6 +158,7 @@ function FilterPanelContent({
   const [activePage, setActivePage] = useState<Page>('main')
   const [subSearch, setSubSearch] = useState('')
   const [playstyleTab, setPlaystyleTab] = useState<'PlayStyle+' | 'PlayStyle'>('PlayStyle+')
+  const [expandedLeagues, setExpandedLeagues] = useState<Set<string>>(new Set())
 
   const [positions, setPositions] = useState<string[]>(
     searchParams.get('position')?.split(',').filter(Boolean) ?? []
@@ -583,9 +610,9 @@ function FilterPanelContent({
             {SORT_OPTIONS.map((opt, i) => (
               <label
                 key={opt.value}
-                className={`flex items-center gap-3 py-2.5 px-1 cursor-pointer hover:text-white transition-colors ${
-                  i % 2 === 0 ? 'border-r border-slate-700 pr-4' : 'pl-4'
-                } ${i < 4 ? 'border-b border-slate-700/50' : ''}`}
+                className={`flex items-center gap-3 py-2.5 px-1 cursor-pointer hover:text-white transition-colors border-b border-slate-700/50 ${
+                  i % 2 === 0 ? 'pr-4' : 'pl-4'
+                }`}
               >
                 <input
                   type="radio"
