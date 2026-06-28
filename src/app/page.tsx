@@ -120,31 +120,32 @@ export default async function HomePage({ searchParams }: PageProps) {
 
   // Build dynamic query
   const conditions: string[] = ['overall_rating BETWEEN :ratingMin AND :ratingMax']
-  const args: Record<string, InValue> = { ratingMin, ratingMax, limit: PAGE_SIZE, offset }
-  if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); args.q = `%${q}%` }
+  const filterArgs: Record<string, InValue> = { ratingMin, ratingMax }
+  if (q) { conditions.push('(common_name LIKE :q OR first_name LIKE :q OR last_name LIKE :q)'); filterArgs.q = `%${q}%` }
   if (selectedPositions.length) {
-    selectedPositions.forEach((v, i) => { args[`pos${i}`] = v })
+    selectedPositions.forEach((v, i) => { filterArgs[`pos${i}`] = v })
     conditions.push(`position_id IN (${selectedPositions.map((_, i) => `:pos${i}`).join(',')})`)
   }
   if (selectedNationalities.length) {
-    selectedNationalities.forEach((v, i) => { args[`nat${i}`] = v })
+    selectedNationalities.forEach((v, i) => { filterArgs[`nat${i}`] = v })
     conditions.push(`nationality_label IN (${selectedNationalities.map((_, i) => `:nat${i}`).join(',')})`)
   }
   if (selectedLeagues.length) {
-    selectedLeagues.forEach((v, i) => { args[`lg${i}`] = v })
+    selectedLeagues.forEach((v, i) => { filterArgs[`lg${i}`] = v })
     conditions.push(`league_name IN (${selectedLeagues.map((_, i) => `:lg${i}`).join(',')})`)
   }
   if (selectedTeams.length) {
-    selectedTeams.forEach((v, i) => { args[`tm${i}`] = v })
+    selectedTeams.forEach((v, i) => { filterArgs[`tm${i}`] = v })
     conditions.push(`team_id IN (${selectedTeams.map((_, i) => `:tm${i}`).join(',')})`)
   }
   if (selectedPlaystyles.length) {
     const psConds = selectedPlaystyles.map((_, i) => `ability_ids LIKE :ps${i}`).join(' OR ')
     conditions.push(`(${psConds})`)
-    selectedPlaystyles.forEach((id, i) => { args[`ps${i}`] = `%,${id},%` })
+    selectedPlaystyles.forEach((id, i) => { filterArgs[`ps${i}`] = `%,${id},%` })
   }
-  if (gender) { conditions.push('gender = :gender'); args.gender = gender }
+  if (gender) { conditions.push('gender = :gender'); filterArgs.gender = gender }
   const where = conditions.join(' AND ')
+  const listArgs = { ...filterArgs, limit: PAGE_SIZE, offset }
 
   const sortClause: Record<string, string> = {
     rank: 'rank ASC',
@@ -159,8 +160,8 @@ export default async function HomePage({ searchParams }: PageProps) {
   const orderBy = sortClause[sort] ?? 'rank ASC'
 
   const [countResult, rowsResult] = await Promise.all([
-    db.execute({ sql: `SELECT COUNT(*) as c FROM players WHERE ${where}`, args }),
-    db.execute({ sql: `SELECT * FROM players WHERE ${where} ORDER BY ${orderBy} LIMIT :limit OFFSET :offset`, args }),
+    db.execute({ sql: `SELECT COUNT(*) as c FROM players WHERE ${where}`, args: filterArgs }),
+    db.execute({ sql: `SELECT * FROM players WHERE ${where} ORDER BY ${orderBy} LIMIT :limit OFFSET :offset`, args: listArgs }),
   ])
 
   const total = countResult.rows[0].c as number
