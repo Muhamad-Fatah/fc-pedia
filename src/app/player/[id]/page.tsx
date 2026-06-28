@@ -3,7 +3,6 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { getDb } from '@/lib/db'
 import { PlayerStats } from '@/components/PlayerStats'
-import { PlaystyleBadge } from '@/components/PlaystyleBadge'
 import type { Player, PlayerAbility } from '@/lib/types'
 import type { Row } from '@libsql/client'
 
@@ -81,8 +80,6 @@ export default async function PlayerDetailPage({ params }: PageProps) {
   const displayName = player.commonName || `${player.firstName} ${player.lastName}`.trim()
   const isGK = player.positionShort === 'GK'
 
-  const plusAbilities = player.playerAbilities.filter((a: PlayerAbility) => a.type?.label === 'Play Style Plus')
-  const baseAbilities = player.playerAbilities.filter((a: PlayerAbility) => a.type?.label !== 'Play Style Plus')
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -179,26 +176,40 @@ export default async function PlayerDetailPage({ params }: PageProps) {
           {player.playerAbilities.length > 0 && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
               <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">PlayStyles</h2>
-              {plusAbilities.length > 0 && (
-                <div className="mb-3">
-                  <p className="text-xs text-amber-400 font-semibold mb-2">Play Style+</p>
-                  <div className="flex flex-wrap gap-2">
-                    {plusAbilities.map((a: PlayerAbility) => (
-                      <PlaystyleBadge key={a.id} ability={a} />
-                    ))}
-                  </div>
-                </div>
-              )}
-              {baseAbilities.length > 0 && (
-                <div>
-                  <p className="text-xs text-slate-400 font-semibold mb-2">PlayStyle</p>
-                  <div className="flex flex-wrap gap-2">
-                    {baseAbilities.map((a: PlayerAbility) => (
-                      <PlaystyleBadge key={a.id} ability={a} />
-                    ))}
-                  </div>
-                </div>
-              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {[...player.playerAbilities]
+                  .sort((a, b) => {
+                    const aPlus = a.type?.label === 'Play Style Plus' ? 0 : 1
+                    const bPlus = b.type?.label === 'Play Style Plus' ? 0 : 1
+                    return aPlus - bPlus
+                  })
+                  .map((a: PlayerAbility) => {
+                    const isPlus = a.type?.label === 'Play Style Plus'
+                    return (
+                      <div key={a.id} className="relative group bg-slate-900 border border-slate-700 rounded-xl p-4 flex items-center gap-3 cursor-default">
+                        {a.imageUrl && (
+                          <Image
+                            src={a.imageUrl}
+                            alt=""
+                            width={48}
+                            height={48}
+                            className="object-contain flex-shrink-0"
+                            style={{ mixBlendMode: 'screen' }}
+                            unoptimized
+                          />
+                        )}
+                        <p className={`font-bold text-sm leading-tight ${isPlus ? 'text-amber-400' : 'text-white'}`}>
+                          {a.label}
+                        </p>
+                        {a.description && (
+                          <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                            {a.description}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+              </div>
             </div>
           )}
         </div>
@@ -209,33 +220,68 @@ export default async function PlayerDetailPage({ params }: PageProps) {
             <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Bio</h2>
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between">
-                <dt className="text-slate-500">Age</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Age
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    The player&apos;s current age based on their date of birth.
+                  </div>
+                </dt>
                 <dd className="text-white font-medium">{age(player.birthdate)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Height</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Height
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    Player&apos;s height in centimeters. Taller players have an advantage in aerial duels.
+                  </div>
+                </dt>
                 <dd className="text-white font-medium">{player.height} cm</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Weight</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Weight
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    Player&apos;s weight in kilograms. Influences physical strength in challenges.
+                  </div>
+                </dt>
                 <dd className="text-white font-medium">{player.weight} kg</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Preferred foot</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Preferred foot
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    The player&apos;s dominant foot. Using the weaker foot reduces shooting, passing, and dribbling accuracy.
+                  </div>
+                </dt>
                 <dd className="text-white font-medium">
                   {player.preferredFoot === '1.0' ? 'Right' : player.preferredFoot === '2.0' ? 'Left' : player.preferredFoot || '—'}
                 </dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-slate-500">Skill moves</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Skill moves
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    Rated 1–5 stars. Higher stars unlock more complex skill moves the player can perform in-game.
+                  </div>
+                </dt>
                 <dd><StarRow count={player.skillMoves} /></dd>
               </div>
               <div className="flex justify-between items-center">
-                <dt className="text-slate-500">Weak foot</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Weak foot
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    Rated 1–5 stars. Determines how accurately the player uses their non-preferred foot for shooting and passing.
+                  </div>
+                </dt>
                 <dd><StarRow count={player.weakFootAbility} /></dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-slate-500">Gender</dt>
+                <dt className="relative group cursor-help text-slate-500 underline decoration-dotted decoration-slate-600">
+                  Gender
+                  <div className="pointer-events-none absolute left-0 bottom-full mb-1.5 w-52 rounded-lg bg-slate-700 px-3 py-2 text-xs text-slate-200 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                    Indicates whether the player belongs to a men&apos;s or women&apos;s team.
+                  </div>
+                </dt>
                 <dd className="text-white font-medium">{player.gender || '—'}</dd>
               </div>
             </dl>
